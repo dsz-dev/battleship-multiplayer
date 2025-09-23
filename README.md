@@ -40,7 +40,7 @@ Posicione estrategicamente seus 3 navios no tabuleiro 5x5:
 
 ```bash
 # Clonar o repositório
-git clone [seu-repositorio]
+git clone https://github.com/dsz-dev/battleship-multiplayer.git
 cd battleship
 
 # Instalar dependências
@@ -245,10 +245,7 @@ Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para mais detalh
 
 **© 2024 - Todos os direitos reservados**
 
-**Desenvolvido por:** Diego Souza  
-**Email:** diegodev.pt@icloud.com  
-**GitHub:** [https://github.com/dsz-dev](https://github.com/dsz-dev)  
-**LinkedIn:** [https://linkedin.com/in/diego-souza-dev](https://linkedin.com/in/diego-souza-dev)
+**Desenvolvido por:** Ana Martins, Diego Souza e Micheal Ortiz
 
 ### 🏆 Créditos do Projeto
 
@@ -261,9 +258,8 @@ Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para mais detalh
 ### 📞 Suporte
 
 Para suporte, dúvidas ou sugestões:
-- 📧 **Email**: diegodev.pt@icloud.com
+- 📧 **Email**: suporte@icloud.com
 - 💬 **Issues**: Abra uma issue no GitHub
-- 🐙 **GitHub**: https://github.com/dsz-dev
 
 ---
 
