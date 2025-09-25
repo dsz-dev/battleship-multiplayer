@@ -221,11 +221,22 @@ npm run dev
 - ✅ Teste a API diretamente no navegador
 - ✅ Verifique console do navegador para erros
 
+### 🔧 Bug Corrigido: IA acerta no barco mas posição não é gravada
+**Problema:** A IA acertava navios do jogador mas o fogo (💥) desaparecia e o barco voltava.
+
+**Solução Implementada:**
+- ✅ Refatoração da função `aiAttack()` para usar `setGameState` com callback
+- ✅ Correção do problema de closure que causava perda de estado
+- ✅ Implementação de campo `hit` nas posições dos navios
+- ✅ Persistência correta do estado entre re-renderizações
+
+**Status:** ✅ **COMPLETAMENTE RESOLVIDO**
+
 ## 📈 Próximas Melhorias
 
 - [ ] 💬 Chat em tempo real entre jogadores
 - [ ] 📊 Sistema de pontuação e ranking
-- [ ] 🤖 Modo single-player contra IA
+- [x] 🤖 Modo single-player contra IA
 - [ ] 🎨 Temas visuais personalizáveis
 - [ ] 📱 App mobile nativo
 - [ ] 🌐 Salas de jogo públicas/privadas

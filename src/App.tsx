@@ -6,7 +6,7 @@ import { Input } from "./components/ui/input";
 interface Ship {
   id: number;
   size: number;
-  positions: { x: number; y: number }[];
+  positions: { x: number; y: number; hit?: boolean }[];
   placed: boolean;
 }
 
@@ -15,8 +15,8 @@ interface GameState {
   playerName: string;
   gameId: number | null;
   gameStatus: 'setup' | 'waiting' | 'playing' | 'finished';
-  playerTurn: number | null;
-  winner: number | null;
+  playerTurn: number | 'ai' | null;
+  winner: number | 'ai' | null;
   ships: Ship[];
   attacks: { x: number; y: number; hit: boolean }[];
   opponentAttacks: { x: number; y: number; hit: boolean }[];
@@ -27,6 +27,7 @@ interface GameState {
 export default function BattleshipGame() {
   const [username, setUsername] = useState('');
   const [gameId, setGameId] = useState('');
+  const [gameMode, setGameMode] = useState<'multiplayer' | 'singleplayer'>('multiplayer');
   const [gameState, setGameState] = useState<GameState>({
     playerId: null,
     playerName: '',
@@ -44,32 +45,39 @@ export default function BattleshipGame() {
     player1Name: '',
     player2Name: ''
   });
-  
+
   const [selectedShip, setSelectedShip] = useState<Ship | null>(null);
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
-
-  // Adicione um estado para mensagem de navio removido
   const [shipRemovedMsg, setShipRemovedMsg] = useState<string>('');
+
+  // Estados para IA
+  const [aiShips, setAiShips] = useState<Ship[]>([]);
 
   // Função para registrar usuário
   const registerUser = async () => {
     try {
-      // Adicionar timestamp para garantir nomes únicos
       const uniqueUsername = username + '_' + Date.now();
-      
+      if (gameMode === 'singleplayer') {
+        // Singleplayer: não precisa registrar no backend
+        setGameState(prev => ({
+          ...prev,
+          playerId: 1,
+          playerName: username
+        }));
+        return;
+      }
       const response = await fetch('/api.php?action=register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ 
+        body: new URLSearchParams({
           username: uniqueUsername,
           display_name: username
         })
       });
       const data = await response.json();
       if (data.success) {
-        console.log('Usuário registrado com ID:', data.user_id);
-        setGameState(prev => ({ 
-          ...prev, 
+        setGameState(prev => ({
+          ...prev,
           playerId: data.user_id,
           playerName: data.display_name
         }));
@@ -77,58 +85,49 @@ export default function BattleshipGame() {
         alert('Erro ao registrar: ' + (data.error || 'Erro desconhecido'));
       }
     } catch (error) {
-      console.error('Erro ao registrar:', error);
       alert('Erro ao conectar com o servidor. Verifique se o XAMPP está rodando.');
     }
   };
 
-  // Polling contínuo para sincronizar estado do jogo
+  // Polling multiplayer
   const startContinuousPolling = (gameIdToCheck: number) => {
     const interval = setInterval(async () => {
       try {
         const response = await fetch(`/api.php?action=get_game_state&game_id=${gameIdToCheck}`);
         const data = await response.json();
-
         if (data.game) {
           const playerTurnId = data.game.turn === 1 ? data.game.player1_id : data.game.player2_id;
-          
-          // Converter para number para garantir comparação correta
           const currentPlayerTurnId = parseInt(playerTurnId);
           const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
-          
-          // Debug: log para entender o que está acontecendo
-          console.log('Polling Debug:', {
-            gameId: gameIdToCheck,
-            currentPlayerId: currentPlayerId,
-            turn: data.game.turn,
-            player1_id: data.game.player1_id,
-            player2_id: data.game.player2_id,
-            playerTurnId: currentPlayerTurnId,
-            isMyTurn: currentPlayerId !== null && currentPlayerTurnId === currentPlayerId,
-            rawPlayerTurnId: playerTurnId,
-            rawCurrentPlayerId: gameState.playerId
-          });
-          
-          // Carregar ataques do oponente contra mim
-          const opponentAttacks = data.moves ? data.moves.filter((move: any) => 
+          const opponentAttacks = data.moves ? data.moves.filter((move: any) =>
             parseInt(move.player_id) !== currentPlayerId
           ).map((move: any) => ({
             x: parseInt(move.x),
             y: parseInt(move.y),
             hit: move.hit === '1' || move.hit === 1
           })) : [];
-
-          // Carregar meus próprios ataques
-          const myAttacks = data.moves ? data.moves.filter((move: any) => 
+          const myAttacks = data.moves ? data.moves.filter((move: any) =>
             parseInt(move.player_id) === currentPlayerId
           ).map((move: any) => ({
             x: parseInt(move.x),
             y: parseInt(move.y),
             hit: move.hit === '1' || move.hit === 1
           })) : [];
-
+          
+          // Atualizar navios do jogador com base nos ataques do oponente que acertaram
+          const updatedShips = gameState.ships.map(ship => ({
+            ...ship,
+            positions: ship.positions.map(pos => {
+              const opponentHit = opponentAttacks.find((attack: { x: number; y: number; hit: boolean }) => 
+                attack.x === pos.x && attack.y === pos.y && attack.hit
+              );
+              return opponentHit ? { ...pos, hit: true } : pos;
+            })
+          }));
+          
           setGameState(prev => ({
             ...prev,
+            ships: updatedShips,
             gameStatus: data.game.status,
             playerTurn: currentPlayerTurnId,
             winner: data.game.winner,
@@ -137,25 +136,17 @@ export default function BattleshipGame() {
             player1Name: data.game.player1_name || prev.player1Name,
             player2Name: data.game.player2_name || prev.player2Name
           }));
-
-          // Se o jogo terminou, para o polling
           if (data.game.status === 'finished') {
             clearInterval(interval);
           }
         }
-      } catch (error) {
-        console.error('Erro no polling:', error);
-      }
-    }, 1500); // Verifica a cada 1.5 segundos para melhor responsividade
-
-    // Para o polling após 10 minutos para evitar loops infinitos
+      } catch (error) {}
+    }, 1500);
     setTimeout(() => clearInterval(interval), 600000);
-    
-    // Retorna o interval para permitir limpeza manual se necessário
     return interval;
   };
 
-  // Função para enviar posições dos navios para o backend
+  // Salvar navios no backend
   const saveShipsToBackend = async (gameId: number) => {
     try {
       const shipsData = gameState.ships.filter(ship => ship.placed);
@@ -169,61 +160,59 @@ export default function BattleshipGame() {
         })
       });
       const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Erro ao salvar navios');
-      }
-      console.log('Navios salvos com sucesso:', data.message);
+      if (!data.success) throw new Error(data.error || 'Erro ao salvar navios');
       return true;
     } catch (error: any) {
-      console.error('Erro ao salvar navios:', error);
       alert('Erro ao salvar navios: ' + (error.message || 'Erro desconhecido'));
       return false;
     }
   };
 
-  // Função para criar jogo
+  // Criar jogo
   const createGame = async () => {
+    if (gameMode === 'singleplayer') {
+      generateAiShips();
+      setGameState(prev => ({
+        ...prev,
+        gameStatus: 'playing',
+        playerTurn: prev.playerId // Jogador começa
+      }));
+      return;
+    }
     try {
       const response = await fetch('/api.php?action=create_game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ 
+        body: new URLSearchParams({
           player1_id: gameState.playerId!.toString(),
           player1_name: gameState.playerName
         })
       });
       const data = await response.json();
       if (data.success) {
-        // Salvar navios no backend antes de definir o jogo como criado
         const shipsSaved = await saveShipsToBackend(data.game_id);
         if (shipsSaved) {
-          setGameState(prev => ({ 
-            ...prev, 
-            gameId: data.game_id, 
+          setGameState(prev => ({
+            ...prev,
+            gameId: data.game_id,
             gameStatus: 'waiting',
             player1Name: gameState.playerName
           }));
-          // Iniciar polling para o criador do jogo também
           startContinuousPolling(data.game_id);
         }
       } else {
         alert('Erro ao criar jogo: ' + (data.error || 'Erro desconhecido'));
       }
     } catch (error) {
-      console.error('Erro ao criar jogo:', error);
       alert('Erro ao conectar com o servidor');
     }
   };
 
-  // Função para entrar em um jogo existente
+  // Entrar em jogo existente
   const joinGame = async () => {
     try {
-      // Primeiro salvar os navios no backend
       const shipsSaved = await saveShipsToBackend(parseInt(gameId));
-      if (!shipsSaved) {
-        return; // Se não conseguiu salvar os navios, não continua
-      }
-
+      if (!shipsSaved) return;
       const response = await fetch('/api.php?action=join_game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -235,7 +224,6 @@ export default function BattleshipGame() {
       });
       const data = await response.json();
       if (data.success) {
-        // Buscar o estado do jogo para obter player1_id e definir playerTurn corretamente
         const gameStateResponse = await fetch(`/api.php?action=get_game_state&game_id=${gameId}`);
         const gameStateData = await gameStateResponse.json();
         if (gameStateData.game) {
@@ -246,7 +234,6 @@ export default function BattleshipGame() {
             gameStatus: 'playing',
             playerTurn: playerTurnId
           }));
-          // Iniciar polling contínuo para o jogador que entrou
           startContinuousPolling(parseInt(gameId));
         } else {
           alert('Erro ao obter estado do jogo');
@@ -255,72 +242,173 @@ export default function BattleshipGame() {
         alert('Erro ao entrar no jogo: ' + (data.error || 'Jogo não encontrado'));
       }
     } catch (error) {
-      console.error('Erro ao entrar no jogo:', error);
       alert('Erro ao conectar com o servidor');
     }
+  };
+
+  // Gerar navios da IA
+  const generateAiShips = () => {
+    const sizes = [3, 2, 1];
+    const ships: Ship[] = [];
+    const occupied: { x: number; y: number }[] = [];
+    for (let i = 0; i < sizes.length; i++) {
+      let placed = false;
+      while (!placed) {
+        const orientation = Math.random() > 0.5 ? 'horizontal' : 'vertical';
+        const x = Math.floor(Math.random() * (orientation === 'horizontal' ? 5 - sizes[i] + 1 : 5));
+        const y = Math.floor(Math.random() * (orientation === 'vertical' ? 5 - sizes[i] + 1 : 5));
+        const positions = [];
+        for (let j = 0; j < sizes[i]; j++) {
+          positions.push({
+            x: orientation === 'horizontal' ? x + j : x,
+            y: orientation === 'vertical' ? y + j : y,
+            hit: false
+          });
+        }
+        if (positions.every(pos => !occupied.some(o => o.x === pos.x && o.y === pos.y))) {
+          ships.push({ id: i + 1, size: sizes[i], positions, placed: true });
+          occupied.push(...positions);
+          placed = true;
+        }
+      }
+    }
+    setAiShips(ships);
   };
 
   // Colocar navio no tabuleiro
   const placeShip = (x: number, y: number) => {
     if (!selectedShip || gameState.gameStatus !== 'setup') return;
-
-    const newPositions: { x: number; y: number }[] = [];
+    const newPositions: { x: number; y: number; hit?: boolean }[] = [];
     for (let i = 0; i < selectedShip.size; i++) {
       if (orientation === 'horizontal') {
-        newPositions.push({ x: x + i, y });
+        newPositions.push({ x: x + i, y, hit: false });
       } else {
-        newPositions.push({ x, y: y + i });
+        newPositions.push({ x, y: y + i, hit: false });
       }
     }
-
-    // Verificar se as posições são válidas
     if (newPositions.some(pos => pos.x >= 5 || pos.y >= 5)) return;
-
     const updatedShips = gameState.ships.map(ship =>
       ship.id === selectedShip.id
         ? { ...ship, positions: newPositions, placed: true }
         : ship
     );
-
     setGameState(prev => ({ ...prev, ships: updatedShips }));
     setSelectedShip(null);
+  };
 
-    // Se todos os navios estiverem colocados, permitir criar jogo
-    if (updatedShips.every(ship => ship.placed)) {
-      // Navios prontos para iniciar
-    }
+  // Ataque da IA
+  const aiAttack = () => {
+    setGameState(prevState => {
+      // Encontrar células disponíveis (não atacadas pela IA)
+      const availableCells: { x: number; y: number }[] = [];
+      for (let x = 0; x < 5; x++) {
+        for (let y = 0; y < 5; y++) {
+          const alreadyAttacked = prevState.opponentAttacks.some(a => a.x === x && a.y === y);
+          if (!alreadyAttacked) availableCells.push({ x, y });
+        }
+      }
+      if (availableCells.length === 0) return prevState;
+      
+      const target = availableCells[Math.floor(Math.random() * availableCells.length)];
+      
+      // Verificar se acertou um navio do jogador (apenas posições não atingidas)
+      const hit = prevState.ships.some(ship =>
+        ship.positions.some(pos => pos.x === target.x && pos.y === target.y && !pos.hit)
+      );
+      
+      const newOpponentAttacks = [...prevState.opponentAttacks, { ...target, hit }];
+      
+      // Se acertou, atualizar ships marcando a posição como atingida
+      let updatedShips = prevState.ships;
+      if (hit) {
+        updatedShips = prevState.ships.map(ship => ({
+          ...ship,
+          positions: ship.positions.map(pos => 
+            pos.x === target.x && pos.y === target.y ? { ...pos, hit: true } : pos
+          )
+        }));
+      }
+      
+      // Verifica vitória da IA usando as posições marcadas como atingidas
+      const allShipsHit = updatedShips.every(ship =>
+        ship.positions.every(pos => pos.hit)
+      );
+      
+      const newState = {
+        ...prevState,
+        ships: updatedShips,
+        opponentAttacks: newOpponentAttacks,
+        playerTurn: hit ? ('ai' as const) : prevState.playerId,
+        gameStatus: allShipsHit ? ('finished' as const) : prevState.gameStatus,
+        winner: allShipsHit ? ('ai' as const) : prevState.winner
+      };
+      
+      // Se acertou e jogo não terminou, dispara novo ataque após delay
+      if (hit && !allShipsHit) {
+        setTimeout(() => aiAttack(), 1000);
+      }
+      
+      return newState;
+    });
   };
 
   // Realizar ataque
   const attackOpponent = async (x: number, y: number) => {
-    // Converter para number para garantir comparação correta
-    const currentPlayerTurn = gameState.playerTurn ? parseInt(gameState.playerTurn.toString()) : null;
-    const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
-    
-    // Verificar se já atacou esta posição
-    const alreadyAttacked = gameState.attacks.some(attack => attack.x === x && attack.y === y);
-    
-    console.log('Tentativa de ataque:', {
-      position: `${x},${y}`,
-      gameStatus: gameState.gameStatus,
-      currentPlayerTurn,
-      currentPlayerId,
-      isMyTurn: currentPlayerTurn === currentPlayerId,
-      alreadyAttacked,
-      existingAttacks: gameState.attacks
-    });
-    
-    if (gameState.gameStatus !== 'playing' || currentPlayerTurn !== currentPlayerId) {
-      console.log('Ataque bloqueado - não é sua vez');
+    if (gameMode === 'singleplayer') {
+      if (gameState.gameStatus !== 'playing' || gameState.playerTurn !== gameState.playerId) return;
+      const alreadyAttacked = gameState.attacks.some(attack => attack.x === x && attack.y === y);
+      if (alreadyAttacked) {
+        alert('Você já atacou esta posição!');
+        return;
+      }
+      const hit = aiShips.some(ship =>
+        ship.positions.some(pos => pos.x === x && pos.y === y && !pos.hit)
+      );
+      const newAttacks = [...gameState.attacks, { x, y, hit }];
+      
+      // Se acertou, atualizar aiShips marcando a posição como atingida
+      if (hit) {
+        const updatedAiShips = aiShips.map(ship => ({
+          ...ship,
+          positions: ship.positions.map(pos => 
+            pos.x === x && pos.y === y ? { ...pos, hit: true } : pos
+          )
+        }));
+        setAiShips(updatedAiShips);
+      }
+      
+      // Só passa o turno para IA se errar
+      setGameState(prev => ({
+        ...prev,
+        attacks: newAttacks,
+        playerTurn: hit ? prev.playerId : 'ai'
+      }));
+      
+      // Verifica vitória do jogador usando as posições marcadas como atingidas
+      const allAiShipsHit = aiShips.every(ship =>
+        ship.positions.every(pos => pos.hit || newAttacks.some(a => a.x === pos.x && a.y === pos.y && a.hit))
+      );
+      if (allAiShipsHit) {
+        setGameState(prev => ({
+          ...prev,
+          gameStatus: 'finished',
+          winner: prev.playerId
+        }));
+        return;
+      }
+      // Se errar, IA ataca no próximo turno (useEffect vai disparar)
       return;
     }
 
+    // Multiplayer
+    const currentPlayerTurn = gameState.playerTurn ? parseInt(gameState.playerTurn.toString()) : null;
+    const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
+    const alreadyAttacked = gameState.attacks.some(attack => attack.x === x && attack.y === y);
+    if (gameState.gameStatus !== 'playing' || currentPlayerTurn !== currentPlayerId) return;
     if (alreadyAttacked) {
-      console.log('Ataque bloqueado - posição já atacada pelo frontend');
       alert('Você já atacou esta posição!');
       return;
     }
-
     try {
       const response = await fetch('/api.php?action=make_move', {
         method: 'POST',
@@ -334,35 +422,39 @@ export default function BattleshipGame() {
       });
       const data = await response.json();
       if (data.success) {
-        console.log('Ataque bem-sucedido:', { x, y, hit: data.hit, game_over: data.game_over });
-        // Atualizar estado com o resultado do ataque
         const newAttack = { x, y, hit: data.hit };
         setGameState(prev => ({
           ...prev,
           attacks: [...prev.attacks, newAttack]
         }));
-        
-        // Verificar se o jogo terminou
         if (data.game_over) {
           setGameState(prev => ({
             ...prev,
             gameStatus: 'finished',
             winner: data.winner
           }));
-        } else if (data.continue_turn) {
-          // Se acertou, continua sendo sua vez - mostrar mensagem
-          console.log('Acertou! Continue jogando...');
         }
-        // O turno será atualizado pelo polling contínuo
       } else {
-        console.log('Erro no ataque:', data.error);
         alert('Erro no ataque: ' + (data.error || 'Erro desconhecido'));
       }
     } catch (error) {
-      console.error('Erro ao atacar:', error);
       alert('Erro ao conectar com o servidor');
     }
   };
+
+  useEffect(() => {
+    if (
+      gameMode === 'singleplayer' &&
+      gameState.gameStatus === 'playing' &&
+      gameState.playerTurn === 'ai' &&
+      gameState.winner === null
+    ) {
+      const timeout = setTimeout(() => {
+        aiAttack();
+      }, 1000);
+      return () => clearTimeout(timeout);
+    }
+  }, [gameState.playerTurn, gameState.gameStatus, gameMode, gameState.winner]);
 
   // Renderizar célula do tabuleiro
   const renderCell = (x: number, y: number, isOpponent: boolean = false) => {
@@ -371,11 +463,9 @@ export default function BattleshipGame() {
       const myAttack = gameState.attacks.find(a => a.x === x && a.y === y);
       const isHit = myAttack?.hit;
       const isMiss = myAttack && !myAttack.hit;
-
       let cellClass = 'cell';
       if (isHit) cellClass += ' hit';
       if (isMiss) cellClass += ' miss';
-
       return (
         <div
           key={`${x}-${y}`}
@@ -388,19 +478,19 @@ export default function BattleshipGame() {
       );
     } else {
       // Seu tabuleiro: mostrar seus navios + ataques do oponente contra você
-      const hasShip = gameState.ships.some(ship => 
+      const hasShip = gameState.ships.some(ship =>
         ship.positions.some(pos => pos.x === x && pos.y === y)
       );
-      
+      const shipPosition = gameState.ships.find(ship =>
+        ship.positions.find(pos => pos.x === x && pos.y === y)
+      )?.positions.find(pos => pos.x === x && pos.y === y);
       const opponentAttack = gameState.opponentAttacks.find(a => a.x === x && a.y === y);
-      const isHitByOpponent = opponentAttack?.hit;
-      const isMissedByOpponent = opponentAttack && !opponentAttack.hit;
-
+      const isHitByOpponent = (shipPosition?.hit === true) || (opponentAttack?.hit === true);
+      const isMissedByOpponent = opponentAttack && !opponentAttack.hit && !shipPosition?.hit;
       let cellClass = 'cell';
       if (hasShip && !isHitByOpponent) cellClass += ' ship';
       if (isHitByOpponent) cellClass += ' hit';
       if (isMissedByOpponent) cellClass += ' miss';
-
       return (
         <div
           key={`${x}-${y}`}
@@ -419,25 +509,18 @@ export default function BattleshipGame() {
   const renderBoard = (isOpponent: boolean = false) => {
     const letters = ['A', 'B', 'C', 'D', 'E'];
     const numbers = ['1', '2', '3', '4', '5'];
-    
     return (
       <div className="board-container">
-        {/* Números no topo (1-5) */}
         <div className="board-header">
           <div className="coord-corner"></div>
           {numbers.map(num => (
             <div key={num} className="coord-number">{num}</div>
           ))}
         </div>
-        
-        {/* Tabuleiro com letras na lateral */}
         <div className="board-with-coords">
           {letters.map((letter, y) => (
             <div key={letter} className="board-row">
-              {/* Letra na lateral esquerda (A-E) */}
               <div className="coord-letter">{letter}</div>
-              
-              {/* Células da linha */}
               <div className="board-cells">
                 {numbers.map((_, x) => renderCell(x, y, isOpponent))}
               </div>
@@ -448,10 +531,10 @@ export default function BattleshipGame() {
     );
   };
 
+  // Renderização principal
   return (
     <div className="container">
       <h1 className="text-4xl font-bold text-center mb-8 text-white">Batalha Naval 🚢</h1>
-      
       {!gameState.playerId ? (
         <Card className="max-w-md mx-auto">
           <CardHeader>
@@ -466,9 +549,14 @@ export default function BattleshipGame() {
                 onChange={(e) => setUsername(e.target.value)}
               />
             </div>
-            <Button onClick={registerUser} className="w-full">
-              Entrar
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => { setGameMode('multiplayer'); registerUser(); }} className="w-full">
+                Jogar Multiplayer
+              </Button>
+              <Button onClick={() => { setGameMode('singleplayer'); registerUser(); }} className="w-full">
+                Jogar contra IA
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ) : gameState.gameStatus === 'setup' ? (
@@ -486,7 +574,6 @@ export default function BattleshipGame() {
                     variant={selectedShip?.id === ship.id ? 'default' : 'outline'}
                     onClick={() => {
                       if (ship.placed) {
-                        // Remove navio do tabuleiro e permite reposicionar
                         const updatedShips = gameState.ships.map(s =>
                           s.id === ship.id ? { ...s, positions: [], placed: false } : s
                         );
@@ -504,14 +591,11 @@ export default function BattleshipGame() {
                   </Button>
                 ))}
               </div>
-
-              {/* Mensagem de navio removido */}
               {shipRemovedMsg && (
                 <div className="mb-4 text-green-600 font-semibold text-center">
                   {shipRemovedMsg}
                 </div>
               )}
-
               <Button
                 variant="secondary"
                 onClick={() => setOrientation(prev => prev === 'horizontal' ? 'vertical' : 'horizontal')}
@@ -519,47 +603,46 @@ export default function BattleshipGame() {
               >
                 Direção: {orientation === 'horizontal' ? 'Horizontal' : 'Vertical'}
               </Button>
-
               <div className="mt-6">
                 <h3 className="font-bold mb-2">Seu Tabuleiro</h3>
                 {renderBoard(false)}
               </div>
-
               {gameState.ships.every(ship => ship.placed) && (
                 <Button onClick={createGame} className="mt-6 w-full">
-                  Criar Novo Jogo
+                  {gameMode === 'singleplayer' ? 'Iniciar contra IA' : 'Criar Novo Jogo'}
                 </Button>
               )}
             </CardContent>
           </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Entrar em Jogo</CardTitle>
-              <CardDescription>Digite o ID do jogo para se conectar</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="mb-4">
-                <Input
-                  placeholder="ID do jogo (ex: 5)"
-                  value={gameId}
-                  onChange={(e) => setGameId(e.target.value)}
-                />
-              </div>
-              <Button 
-                onClick={joinGame} 
-                className="w-full"
-                disabled={!gameId || !gameState.ships.every(ship => ship.placed)}
-              >
-                Entrar no Jogo
-              </Button>
-              {!gameState.ships.every(ship => ship.placed) && (
-                <p className="text-center mt-2" style={{color: '#6b7280', fontSize: '0.9rem'}}>
-                  Posicione todos os navios primeiro
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          {gameMode === 'multiplayer' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Entrar em Jogo</CardTitle>
+                <CardDescription>Digite o ID do jogo para se conectar</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-4">
+                  <Input
+                    placeholder="ID do jogo (ex: 5)"
+                    value={gameId}
+                    onChange={(e) => setGameId(e.target.value)}
+                  />
+                </div>
+                <Button
+                  onClick={joinGame}
+                  className="w-full"
+                  disabled={!gameId || !gameState.ships.every(ship => ship.placed)}
+                >
+                  Entrar no Jogo
+                </Button>
+                {!gameState.ships.every(ship => ship.placed) && (
+                  <p className="text-center mt-2" style={{ color: '#6b7280', fontSize: '0.9rem' }}>
+                    Posicione todos os navios primeiro
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       ) : gameState.gameStatus === 'waiting' ? (
         <Card className="max-w-md mx-auto">
@@ -579,6 +662,9 @@ export default function BattleshipGame() {
           <CardHeader>
             <CardTitle>
               {(() => {
+                if (gameMode === 'singleplayer') {
+                  return gameState.winner === gameState.playerId ? '🎉 Vitória!' : '😔 Derrota';
+                }
                 const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
                 const isWinner = gameState.winner === currentPlayerId;
                 return isWinner ? '🎉 Vitória!' : '😔 Derrota';
@@ -586,25 +672,33 @@ export default function BattleshipGame() {
             </CardTitle>
             <CardDescription>
               {(() => {
+                if (gameMode === 'singleplayer') {
+                  return gameState.winner === gameState.playerId
+                    ? 'Parabéns! Você afundou todos os navios da IA!'
+                    : 'A IA afundou todos os seus navios. Mais sorte na próxima vez!';
+                }
                 const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
                 const isWinner = gameState.winner === currentPlayerId;
-                return isWinner ? 
-                  'Parabéns! Você afundou todos os navios do oponente!' : 
+                return isWinner ?
+                  'Parabéns! Você afundou todos os navios do oponente!' :
                   'O oponente afundou todos os seus navios. Mais sorte na próxima vez!';
               })()}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-center">
-              <div className="text-9xl mb-6" style={{fontSize: '8rem', lineHeight: '1'}}>
+              <div className="text-9xl mb-6" style={{ fontSize: '8rem', lineHeight: '1' }}>
                 {(() => {
+                  if (gameMode === 'singleplayer') {
+                    return gameState.winner === gameState.playerId ? '🏆' : '💔';
+                  }
                   const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
                   const isWinner = gameState.winner === currentPlayerId;
                   return isWinner ? '🏆' : '💔';
                 })()}
               </div>
-              <Button 
-                onClick={() => window.location.reload()} 
+              <Button
+                onClick={() => window.location.reload()}
                 className="w-full"
               >
                 Jogar Novamente
@@ -623,22 +717,28 @@ export default function BattleshipGame() {
               {renderBoard(false)}
             </CardContent>
           </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>
-                Tabuleiro Oponente{gameState.player1Name && gameState.player2Name ? 
-                  ` - ${gameState.playerName === gameState.player1Name ? gameState.player2Name : gameState.player1Name}` : 
-                  ''}
+                {gameMode === 'singleplayer'
+                  ? 'Tabuleiro IA'
+                  : `Tabuleiro Oponente${gameState.player1Name && gameState.player2Name ?
+                    ` - ${gameState.playerName === gameState.player1Name ? gameState.player2Name : gameState.player1Name}` :
+                    ''}`}
               </CardTitle>
               <CardDescription>
                 {(() => {
+                  if (gameMode === 'singleplayer') {
+                    const isMyTurn = gameState.playerTurn === gameState.playerId;
+                    return isMyTurn
+                      ? '🎯 SUA VEZ! Clique para atacar'
+                      : '⏳ Aguardando IA atacar...';
+                  }
                   const currentPlayerTurn = gameState.playerTurn ? parseInt(gameState.playerTurn.toString()) : null;
                   const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
                   const isMyTurn = currentPlayerTurn !== null && currentPlayerId !== null && currentPlayerTurn === currentPlayerId;
-                  
-                  return isMyTurn ? 
-                    '🎯 SUA VEZ! Clique para atacar' : 
+                  return isMyTurn ?
+                    '🎯 SUA VEZ! Clique para atacar' :
                     '⏳ Aguardando oponente atacar...';
                 })()}
               </CardDescription>
@@ -646,12 +746,19 @@ export default function BattleshipGame() {
             <CardContent>
               {renderBoard(true)}
               {(() => {
+                if (gameMode === 'singleplayer') {
+                  const isMyTurn = gameState.playerTurn === gameState.playerId;
+                  return isMyTurn && (
+                    <p className="text-center mt-2" style={{ color: '#22c55e', fontWeight: 'bold' }}>
+                      Clique nas células para atacar!
+                    </p>
+                  );
+                }
                 const currentPlayerTurn = gameState.playerTurn ? parseInt(gameState.playerTurn.toString()) : null;
                 const currentPlayerId = gameState.playerId ? parseInt(gameState.playerId.toString()) : null;
                 const isMyTurn = currentPlayerTurn !== null && currentPlayerId !== null && currentPlayerTurn === currentPlayerId;
-                
                 return isMyTurn && (
-                  <p className="text-center mt-2" style={{color: '#22c55e', fontWeight: 'bold'}}>
+                  <p className="text-center mt-2" style={{ color: '#22c55e', fontWeight: 'bold' }}>
                     Clique nas células para atacar!
                   </p>
                 );
