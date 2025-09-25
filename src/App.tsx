@@ -48,6 +48,9 @@ export default function BattleshipGame() {
   const [selectedShip, setSelectedShip] = useState<Ship | null>(null);
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
 
+  // Adicione um estado para mensagem de navio removido
+  const [shipRemovedMsg, setShipRemovedMsg] = useState<string>('');
+
   // Função para registrar usuário
   const registerUser = async () => {
     try {
@@ -481,14 +484,34 @@ export default function BattleshipGame() {
                   <Button
                     key={ship.id}
                     variant={selectedShip?.id === ship.id ? 'default' : 'outline'}
-                    onClick={() => setSelectedShip(ship)}
-                    disabled={ship.placed}
+                    onClick={() => {
+                      if (ship.placed) {
+                        // Remove navio do tabuleiro e permite reposicionar
+                        const updatedShips = gameState.ships.map(s =>
+                          s.id === ship.id ? { ...s, positions: [], placed: false } : s
+                        );
+                        setGameState(prev => ({ ...prev, ships: updatedShips }));
+                        setSelectedShip({ ...ship, positions: [], placed: false });
+                        setShipRemovedMsg(`Navio de tamanho ${ship.size} removido! Pronto para reposicionar.`);
+                      } else {
+                        setSelectedShip(ship);
+                        setShipRemovedMsg('');
+                      }
+                    }}
+                    disabled={false}
                   >
                     Navio {ship.size} ⛵
                   </Button>
                 ))}
               </div>
-              
+
+              {/* Mensagem de navio removido */}
+              {shipRemovedMsg && (
+                <div className="mb-4 text-green-600 font-semibold text-center">
+                  {shipRemovedMsg}
+                </div>
+              )}
+
               <Button
                 variant="secondary"
                 onClick={() => setOrientation(prev => prev === 'horizontal' ? 'vertical' : 'horizontal')}

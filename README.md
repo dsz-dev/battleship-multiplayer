@@ -144,6 +144,11 @@ battleship/
 - ✅ Detecção de mudanças de turno
 - ✅ Sincronização de ataques entre jogadores
 
+## Funcionalidades Recentes
+
+- **Reposicionamento de Navios:**  
+  Durante a fase de posicionamento, clique em um navio já colocado para removê-lo e reposicionar. Uma mensagem confirma a remoção e libera o navio para nova posição.
+
 ## 🛠️ Tecnologias Utilizadas
 
 ### Frontend
